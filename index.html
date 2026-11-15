@@ -7,6 +7,10 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
 <title>驻足 · 城市建筑讲解</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<link rel="icon" href="icon-192.png">
+<meta name="apple-mobile-web-app-title" content="驻足">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
 <style>
@@ -129,6 +133,18 @@
   .popup-btns{display:flex;gap:6px;margin-top:6px}
   .popup-btns button{font:inherit;font-size:12.5px;padding:5px 8px;border-radius:8px;border:1px solid var(--line);background:#faf6ee;cursor:pointer}
   .popup-btns button.pri{background:var(--green);color:#fff;border-color:var(--green)}
+  .styles{display:flex;gap:6px;flex-wrap:wrap;margin:12px 0 2px}
+  .styles button{font:inherit;font-size:13px;padding:6px 11px;border-radius:999px;border:1px solid var(--line);background:#faf6ee;color:var(--ink);cursor:pointer}
+  .styles button.on{background:var(--brick);border-color:var(--brick);color:#fff}
+  .events{margin:10px 0 0;padding:0;list-style:none}
+  .events li{font-size:13.5px;padding:6px 0;border-top:1px dashed var(--line);line-height:1.6}
+  .events li:first-child{border-top:none}
+  .events b{color:var(--brick);font-weight:600;margin-right:6px}
+  .export{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+  .chk{display:inline-flex;align-items:center;gap:6px;font-size:13px;color:var(--muted);margin-top:8px}
+  .chk input{width:18px;height:18px;accent-color:var(--green)}
+  #watch-help{background:#f6f1e7;border-radius:10px;padding:10px 12px;margin-top:10px;font-size:13px;line-height:1.7}
+  #watch-help b{color:var(--green)}
 </style>
 </head>
 <body>
@@ -155,6 +171,10 @@
       <button id="btn-speech" class="btn ghost" aria-pressed="true">朗读：开</button>
       <button id="btn-end" class="btn ghost">结束</button>
     </div>
+    <div class="row" style="margin-top:10px"><button id="btn-watch" class="btn ghost">⌚ 手表遥控：关</button></div>
+    <div id="watch-help" class="hidden">已开启。手机上像放音乐一样，手表的<b>音乐卡片</b>可以控制讲解：<br>
+      <b>⏯ 播放/暂停</b>：朗读 / 停止当前讲解<br><b>⏭ 下一首</b>：讲下一个地标（有路线时：报下一站的方向和距离）<br><b>⏮ 上一首</b>：重听<br>
+      手表上的“歌名”会显示当前地标，“歌手”一栏显示下一站方向和距离。<span id="notify-tip"></span></div>
     <div class="seg" id="radius-seg"><span>范围(米)</span><button data-r="50">50</button><button data-r="100">100</button><button data-r="200">200</button><button data-r="500">500</button><button data-r="1000">1000</button></div>
     <p id="sim-tip" class="note hidden">模拟模式：点地图上任意位置，就等于你站在那里停下了。也可以点下面的地点。</p>
     <div id="presets" class="presets hidden"></div>
@@ -198,7 +218,12 @@
       <label class="field"><span>忽略误差大于（米）的定位</span><input type="number" data-k="maxAcc" min="10" max="200" step="5"></label>
       <label class="field"><span>同一地标多久内不重复自动讲（分钟）</span><input type="number" data-k="cooldownMin" min="0" max="1440" step="10"></label>
       <label class="field"><span>语速</span><input type="range" data-k="rate" min="0.6" max="1.4" step="0.05"></label>
+      <label class="field"><span>讲解风格<small>“幽默”和“历史故事”需要打开下面的 AI；卡片上也能随时切换</small></span><select data-k="style"><option value="normal">📖 常规介绍</option><option value="humor">😄 幽默</option><option value="history">🏺 历史故事</option></select></label>
       <label class="field"><span>停下后朗读讲解<small>关掉就只显示文字；卡片上的 ▶ 随时可以手动朗读</small></span><input type="checkbox" data-k="speech"></label>
+      <div class="sep">手表 / 耳机</div>
+      <label class="field"><span>到站和讲解时发通知<small>华为手表会震动并显示文字。iPhone 需要先“添加到主屏幕”，再从主屏幕图标打开本页</small></span><input type="checkbox" data-k="notify"></label>
+      <div class="row" style="margin-top:6px"><button id="btn-test-notify" class="btn small">发一条测试通知</button></div>
+      <p id="notify-result" class="note"></p>
       <div class="sep">AI 讲解与提问</div>
       <label class="field"><span>使用 AI<small>把百科资料整理成完整讲解（建造经过、和城市的关系、现场看点），讲完还能接着提问</small></span><input type="checkbox" data-k="ai"></label>
       <label class="field"><span>AI 服务</span><select data-k="provider"><option value="deepseek">DeepSeek</option><option value="claude">Claude</option><option value="custom">其他（兼容 OpenAI 接口）</option></select></label>
@@ -239,7 +264,7 @@ const LS = {
 };
 const DEFAULTS = { radius:50, dwellSec:10, dwellRadius:15, minLinks:4, maxAcc:40, cooldownMin:180, rate:1.0, speech:true,
                    ai:false, provider:'deepseek', dsKey:'', dsModel:'deepseek-flash', claudeKey:'', claudeModel:'claude-haiku-5-5',
-                   customBase:'', customKey:'', customModel:'', chooseMode:'ask', cats:{} };
+                   customBase:'', customKey:'', customModel:'', chooseMode:'ask', cats:{}, style:'normal', watch:false, notify:true, roundTrip:false };
 const S = Object.assign({}, DEFAULTS, LS.get('settings', {}));
 if(S.apiKey && !S.claudeKey){ S.claudeKey = S.apiKey; } // 兼容旧版设置
 delete S.apiKey; delete S.model; delete S.autoSpeak;
@@ -394,7 +419,7 @@ function speak(parts){
     const u = new SpeechSynthesisUtterance(c.text);
     u.lang = c.lang; const v = pickVoice(c.lang); if(v) u.voice = v; u.rate = S.rate;
     if(i === 0) u.onstart = () => setSpeaking(true);
-    if(i === list.length-1){ u.onend = () => setSpeaking(false); u.onerror = () => setSpeaking(false); }
+    if(i === list.length-1){ u.onend = () => { setSpeaking(false); remoteResume(); }; u.onerror = () => { setSpeaking(false); remoteResume(); }; }
     synth.speak(u);
   });
 }
@@ -622,9 +647,9 @@ async function fetchExtract(lang, title){
   }
   const clean = a => a.join('\n').replace(/\n{2,}/g, '\n').trim();
   const hist = sections.find(s => HIST_RE.test(s.title));
-  return { lang, title: pg.title, intro: clean(intro), history: hist ? clean(hist.body) : '', full: pg.extract.slice(0, 7000) };
+  return { lang, title: pg.title, intro: clean(intro), history: hist ? clean(hist.body) : '', full: pg.extract.slice(0, 12000) };
 }
-async function wikiTexts(c){
+async function wikiTexts(c, style){
   const order = [];
   if(c.zhwiki) order.push(['zh', c.zhwiki]);
   if(c.enwiki) order.push(['en', c.enwiki]);
@@ -681,6 +706,62 @@ function templateNarration({ c, f, texts, others }){
   return parts;
 }
 
+/* ---------------- 历史事件（“历史故事”风格用） ---------------- */
+function wdYear(v){
+  const m = /^(-?)0*(\d+)-/.exec(v || ''); if(!m) return '';
+  return (m[1] ? '公元前' : '') + m[2] + '年';
+}
+async function fetchEvents(c, p){
+  const V = n => '?' + n;
+  const tail = `
+  ${V('e')} wikibase:sitelinks ${V('l')} . FILTER(${V('l')} >= 2)
+  OPTIONAL { ${V('e')} wdt:P585 ${V('da')} . } OPTIONAL { ${V('e')} wdt:P580 ${V('db')} . }
+  BIND(COALESCE(${V('da')}, ${V('db')}) AS ${V('d')}) FILTER(BOUND(${V('d')}))
+  FILTER NOT EXISTS { ${V('e')} wdt:P641 ${V('sport')} . }
+  FILTER NOT EXISTS { ${V('e')} wdt:P1082 ${V('pop')} . }
+  OPTIONAL { ${V('zhA')} schema:about ${V('e')} ; schema:isPartOf <https://zh.wikipedia.org/> . }
+  OPTIONAL { ${V('enA')} schema:about ${V('e')} ; schema:isPartOf <https://en.wikipedia.org/> . }
+  SERVICE wikibase:label { bd:serviceParam wikibase:language "zh-cn,zh-hans,zh,en,mul,nl,fr,de" . ${V('e')} rdfs:label ${V('eLabel')} . ${V('e')} schema:description ${V('eDescription')} . }
+} GROUP BY ${V('e')} ${V('eLabel')} ${V('eDescription')} ORDER BY DESC(${V('links')}) LIMIT 8`;
+  const head = `SELECT ${V('e')} ${V('eLabel')} ${V('eDescription')} (MIN(${V('d')}) AS ${V('when')}) (MAX(${V('l')}) AS ${V('links')}) (SAMPLE(${V('zhA')}) AS ${V('zh')}) (SAMPLE(${V('enA')}) AS ${V('en')}) WHERE {`;
+  const around = head + ` SERVICE wikibase:around { ${V('e')} wdt:P625 ${V('loc')} . bd:serviceParam wikibase:center "Point(${(+c.lon).toFixed(6)} ${(+c.lat).toFixed(6)})"^^geo:wktLiteral . bd:serviceParam wikibase:radius "1.0" . } ` + tail;
+  const qs = [around];
+  if(/^Q\d+$/.test(c.qid)) qs.push(head + ` ${V('e')} wdt:P276 wd:${c.qid} . ` + tail);
+  const res = await Promise.all(qs.map(q => getJSON('https://query.wikidata.org/sparql?format=json&query=' + encodeURIComponent(q), 15000).catch(() => null)));
+  const seen = new Set(), out = [];
+  res.forEach((j, idx) => (j ? j.results.bindings : []).forEach(b => {
+    const id = b.e.value.split('/').pop(); if(seen.has(id)) return; seen.add(id);
+    const label = b.eLabel ? b.eLabel.value : ''; if(!label || /^Q\d+$/.test(label)) return;
+    out.push({ qid:id, label, description: b.eDescription ? b.eDescription.value : '', year: wdYear(b.when && b.when.value),
+               links: +(b.links ? b.links.value : 0) + (idx === 1 ? 50 : 0), // 明确发生“在这座建筑”的排前面
+               zhwiki: wikiTitle(b.zh), enwiki: wikiTitle(b.en) });
+  }));
+  return out.sort((a, b) => b.links - a.links).slice(0, 6);
+}
+async function eventTextsFor(events){
+  const top = events.find(e => e.zhwiki || e.enwiki); if(!top) return [];
+  try{ return [await fetchExtract(top.zhwiki ? 'zh' : 'en', top.zhwiki || top.enwiki)]; }catch(e){ return []; }
+}
+function templateHistory(ctx){
+  const { c, f, texts, events, eventTexts } = ctx;
+  const parts = [];
+  const name = (f && f.label) || c.label;
+  parts.push({ text:`你面前的是「${name}」${f && f.native && f.native !== name ? '（' + f.native + '）' : ''}。我们来聊聊这一带发生过的事。`, lang:'zh-CN', kind:'facts' });
+  if(events && events.length){
+    parts.push({ text:'资料里记载，附近或这里发生过：' + events.slice(0, 4).map(e => `${e.year ? e.year + '，' : ''}${e.label}${e.description ? '——' + e.description : ''}`).join('；') + '。', lang:'zh-CN', kind:'events' });
+    const t = (eventTexts || [])[0];
+    if(t) parts.push({ text: firstN(stripParens(t.intro), t.lang === 'zh' ? 4 : 3, t.lang), lang: LANG_TAG[t.lang], kind: t.lang === 'zh' ? 'story' : 'wiki', src:t });
+  }
+  const own = texts && (texts.zh || texts.en || Object.values(texts)[0]);
+  if(own && own.history){
+    const zh = own.lang === 'zh';
+    parts.push({ text:(events && events.length ? '再说说它自己的故事：' : '资料里附近记载的事件不多，说说它自己的故事：'), lang:'zh-CN', kind:'bridge' });
+    parts.push({ text: firstN(stripParens(own.history), zh ? 5 : 4, own.lang), lang: LANG_TAG[own.lang], kind: zh ? 'story' : 'wiki', src: own });
+  }
+  if(parts.length === 1) return templateNarration(ctx);
+  return parts;
+}
+
 const AI_SYSTEM = `你是一位热情又严谨的欧洲城市建筑导游，正在为一位站在建筑前的中国留学生做现场讲解。
 用简体中文，口语化、适合朗读，不要标题、列表、Markdown 或括号注释。外文专有名词第一次出现时给出中文译名，必要时附原文。
 讲解词只使用下面提供的资料；资料里没有的日期、人名、数字一律不要编造。
@@ -691,6 +772,31 @@ const NARRATE_PROMPT = `请写一段 220–350 字的讲解词，依次包括：
 3. 它和这座城市的关系——在城市的历史、经济、宗教或日常生活中扮演什么角色；
 4. 一个我此刻抬头就能亲眼看到的细节；
 5. 如果周边还有其他知名建筑或艺术品，最后用一句话提一下方位。`;
+const STYLES = [
+  { k:'normal',  name:'常规介绍', icon:'📖' },
+  { k:'humor',   name:'幽默',    icon:'😄' },
+  { k:'history', name:'历史故事', icon:'🏺' }
+];
+const STYLE_TONE = {
+  normal: '',
+  humor: '【风格】这次请用轻松幽默的语气，像一位爱开玩笑、懂历史的本地朋友：多用生活化的比喻、俏皮的吐槽和反差，但所有事实（年份、人名、数字）必须来自资料，笑点不能歪曲史实，也不要拿宗教、民族、灾难开玩笑。',
+  history: '【风格】这次请当讲故事的人，侧重“历史上在这里或附近发生过什么”：人物、冲突、转折、结局，以及它对这座城市的影响。故事必须来自资料（历史事件列表、百科原文里的历史部分），不要编造情节和对白。'
+};
+const STYLE_PROMPT = {
+  normal: NARRATE_PROMPT,
+  humor: `请用幽默风趣的方式写一段 220–350 字的讲解词：
+1. 用一句俏皮的开场告诉我面前是什么（中文名，并说一次当地名称）；
+2. 把它的来历和重要变化讲得有趣，可以打比方、拿古今做对比；
+3. 顺带讲讲它和这座城市的关系；
+4. 最后给我一个“抬头看”的小彩蛋细节。
+事实必须来自资料，幽默只体现在说法上。`,
+  history: `请写一段 250–400 字的“这里发生过的故事”：
+1. 先用一句话点出我面前是什么（中文名，并说一次当地名称）；
+2. 从资料里的历史事件列表和百科原文的历史部分中，挑 1–2 件最有画面感的事，按时间、人物、发生了什么、结果讲成故事；
+3. 说清楚这件事和这个地方、这座城市的关系；
+4. 如果资料里几乎没有相关事件，就直说“资料里记载的事件不多”，改讲这座建筑自身经历过的最大转折。
+不要编造资料里没有的情节、对白和数字。`
+};
 const CHAT_SUGGESTIONS = ['它为什么建在这里？', '它和这座城市有什么关系？', '现场有哪些细节值得看？', '当年是怎么建起来的？'];
 
 function aiCfg(force){
@@ -725,7 +831,7 @@ async function callLLM(cfg, system, messages, maxTokens){
   if(!text.trim()) throw new Error('AI 返回为空');
   return text.trim();
 }
-function buildSystem({ c, f, texts, others }){
+function buildSystem({ c, f, texts, others, events, eventTexts, style }){
   const material = {
     名称: (f && f.label) || c.label, 当地名称: f && f.native, 简述: (f && f.desc) || c.description, 类型: f && f.types,
     所在城市: f && f.city, 国家: f && f.country, 始建: f && f.built, 建造期: f && f.constr, 落成: f && f.opened,
@@ -734,8 +840,15 @@ function buildSystem({ c, f, texts, others }){
     类别: c.cat ? (CAT[c.cat] || CAT.other).name + (c.indoor ? '（在室内）' : '') : undefined,
     周边其他知名地标: others.slice(0, 5).map(o => `${(CAT[o.cat] || CAT.other).name}：${o.label}（${o.dist < 12 ? '就在旁边' : o.dirText + '约' + Math.round(o.dist) + '米'}）`)
   };
-  const docs = Object.values(texts || {}).map(t => `【${LANG_NAME[t.lang]}维基百科：${t.title}】\n${t.full.slice(0, 6000)}`).join('\n\n');
-  return `${AI_SYSTEM}\n\n=== 资料：结构化信息（来自 Wikidata）===\n${JSON.stringify(material, null, 1)}\n\n=== 资料：百科原文 ===\n${docs || '（无）'}`;
+  const per = style === 'history' ? 9000 : 6000;
+  const docs = Object.values(texts || {}).map(t => `【${LANG_NAME[t.lang]}维基百科：${t.title}】\n${t.full.slice(0, per)}`).join('\n\n');
+  let ev = '';
+  if(events && events.length){
+    ev = '\n\n=== 资料：附近或在这里发生过的历史事件（来自 Wikidata）===\n' + events.map(e => `- ${e.year || ''} ${e.label}：${e.description || ''}`).join('\n');
+    ev += (eventTexts || []).map(t => `\n\n【${LANG_NAME[t.lang]}维基百科：${t.title}】\n${t.full.slice(0, 4000)}`).join('');
+  }
+  const tone = STYLE_TONE[style || 'normal'] || '';
+  return `${AI_SYSTEM}${tone ? '\n' + tone : ''}\n\n=== 资料：结构化信息（来自 Wikidata）===\n${JSON.stringify(material, null, 1)}\n\n=== 资料：百科原文 ===\n${docs || '（无）'}${ev}`;
 }
 
 /* ---------------- 提问对话框 ---------------- */
@@ -837,30 +950,42 @@ function othersOf(c, p){ return st.cands.filter(x => x.qid !== c.qid).map(x => p
 async function present(c, p, others, manual){
   stopSpeech();
   prep(c, p);
+  const style = S.style || 'normal';
   showLoading(`正在读取「${c.label}」的资料…`);
   if(manual) $('#card').scrollIntoView({ behavior:'smooth', block:'start' });
-  const [f, texts] = await Promise.all([
+  const [f, texts, events] = await Promise.all([
     entityFacts(c).catch(e => { log('详情读取失败：' + e.message); return null; }),
-    wikiTexts(c).catch(e => { log('正文读取失败：' + e.message); return {}; })
+    wikiTexts(c, style).catch(e => { log('正文读取失败：' + e.message); return {}; }),
+    style === 'history' ? fetchEvents(c, p).catch(e => { log('历史事件读取失败：' + e.message); return []; }) : Promise.resolve([])
   ]);
-  const ctx = { c, p, f, texts, others };
+  const eventTexts = style === 'history' && events.length ? await eventTextsFor(events) : [];
+  const ctx = { c, p, f, texts, others, events, eventTexts, style };
   const system = buildSystem(ctx), cfg = aiCfg();
-  let parts = null, ai = null, aiErr = '';
+  const prompt = STYLE_PROMPT[style] || NARRATE_PROMPT;
+  let parts = null, ai = null, aiErr = '', note = '';
   if(cfg){
-    showLoading(`${cfg.name} 正在整理讲解词…`);
-    try{ parts = [{ text: await callLLM(cfg, system, [{ role:'user', content: NARRATE_PROMPT }], 1200), lang:'zh-CN', kind:'ai' }]; ai = cfg.name; }
+    showLoading(`${cfg.name} 正在用「${(STYLES.find(x => x.k === style) || STYLES[0]).name}」风格整理讲解词…`);
+    try{ parts = [{ text: await callLLM(cfg, system, [{ role:'user', content: prompt }], 1400), lang:'zh-CN', kind:'ai' }]; ai = cfg.name; }
     catch(e){ aiErr = e.message; log('AI 讲解失败，改用基础讲解：' + e.message); }
   }
-  if(!parts) parts = templateNarration(ctx);
-  st.current = { ctx, parts, ai, aiErr };
+  if(!parts){
+    if(style === 'history') parts = templateHistory(ctx);
+    else parts = templateNarration(ctx);
+    if(style === 'humor') note = '幽默风格需要 AI 来写，先用常规介绍。在「设置」里打开“使用 AI”就能听幽默版。';
+    if(style === 'history' && !cfg) note = '没开 AI 时，历史故事是把资料里的事件和历史段落直接读出来；打开 AI 会讲成完整的故事。';
+  }
+  st.current = { ctx, parts, ai, aiErr, note };
   st.chat = { system, pending:false, error:'', messages: [
-    { role:'user', content: ai ? NARRATE_PROMPT : '请先简单介绍一下这个地标。' },
+    { role:'user', content: ai ? prompt : '请先简单介绍一下这个地标。' },
     { role:'assistant', content: parts.map(x => x.text).join('\n') } ] };
-  renderCard(ctx, parts, ai, aiErr);
+  renderCard(ctx, parts, ai, aiErr, note);
   renderChat();
   markSeen(c, p);
   mapCandidates(st.candP || p, true);
-  if(S.speech) speak(parts);
+  if(S.speech || st.forceSpeak){ st.forceSpeak = false; speak(parts); }
+  remoteMeta();
+  const ns = nextStop();
+  notifyWatch(`📍 ${nameOf(c)}`, parts.map(x => x.text).join(' ').slice(0, 110) + (ns && ns.qid !== c.qid ? `…｜下一站：${nameOf(ns)}` : ''));
 }
 
 function markSeen(c, p){
@@ -884,6 +1009,7 @@ function stars(c){ return '★'.repeat(Math.min(5, Math.max(1, Math.round(Math.l
 function renderChooser(announce){
   const list = st.cands, p = st.candP, el = $('#card');
   if(!list.length) return;
+  st.view = 'chooser';
   el.classList.remove('hidden');
   $('#chat').classList.add('hidden');
   const seen = LS.get('seen', {});
@@ -892,7 +1018,10 @@ function renderChooser(announce){
     <div class="eyebrow">${S.radius >= 1000 ? '1 公里' : S.radius + ' 米'}内 · ${list.length} 处地标</div>
     <h2 style="font-size:22px">先看哪一个？</h2>
     <p class="note" style="margin-top:2px">点名字听介绍；点“＋路线”把想去的加进来，再按顺序跟着地图走。编号和地图上的一致，绿色“站N”是路线里的顺序。</p>
-    <div class="actions"><button class="btn small primary" id="ch-all">全部加入路线（自动排最短）</button></div>
+    <div class="actions">
+      <button class="btn small primary" id="ch-best" ${st.route.filter(x => !x.done).length < 2 ? 'disabled style="opacity:.45"' : ''}>✨ 生成最优路线（已选 ${st.route.filter(x => !x.done).length}）</button>
+      <button class="btn small" id="ch-all">全选</button>
+    </div>
     <ul class="cands">${list.map((c, i) => `<li>
       <span class="num ${badge(c, i).cls}">${badge(c, i).text}</span>
       <div class="ci" data-i="${i}"><div class="li-name">${esc(nameOf(c))}${seen[c.qid] ? '<span class="tag-done">✓ 听过</span>' : ''}</div>
@@ -900,7 +1029,10 @@ function renderChooser(announce){
       <button class="mini addbtn" data-i="${i}">${inRoute(c) ? '✓ 已加' : '＋路线'}</button></li>`).join('')}</ul>`;
   el.querySelectorAll('.ci').forEach(d => d.onclick = () => { const c = list[+d.dataset.i]; present(c, st.last || p, othersOf(c, st.last || p), true); });
   el.querySelectorAll('.addbtn').forEach(bt => bt.onclick = () => { const c = list[+bt.dataset.i]; if(inRoute(c)) removeFromRoute(c.qid); else addToRoute(c); renderChooser(false); });
-  $('#ch-all').onclick = () => { list.forEach(c => addToRoute(c, true)); optimizeRoute(); renderChooser(false); $('#route').scrollIntoView({ behavior:'smooth', block:'start' }); };
+  $('#ch-all').onclick = () => { list.forEach(c => addToRoute(c, true)); renderChooser(false); };
+  $('#ch-best').onclick = () => { if(st.route.filter(x => !x.done).length < 2) return; optimizeRoute(); renderChooser(false); $('#route').scrollIntoView({ behavior:'smooth', block:'start' }); };
+  remoteMeta();
+  if(announce) notifyWatch(`附近 ${list.length} 处地标`, list.slice(0, 5).map((c, i) => `${i + 1}. ${nameOf(c)} ${Math.round(c.dist)}米`).join('  '));
   if(announce && S.speech){
     const names = list.slice(0, 3).map(c => nameOf(c)).join('、');
     speak([{ text:`附近有 ${list.length} 处地标：${names}${list.length > 3 ? '等' : ''}。想先看哪一个？请在屏幕上选择。`, lang:'zh-CN' }]);
@@ -909,7 +1041,7 @@ function renderChooser(announce){
 
 /* ---------------- 路线 ---------------- */
 const inRoute = c => st.route.some(x => x.qid === c.qid);
-const saveRoute = () => { LS.set('route', st.route); renderRoute(); renderNextStop(true); mapRoute(); if(st.candP) refreshCandPins(); };
+const saveRoute = () => { LS.set('route', st.route); renderRoute(); renderNextStop(true); mapRoute(); if(st.candP) refreshCandPins(); if(st.view === 'chooser') renderChooser(false); };
 function nextStop(){ return st.route.find(x => !x.done) || null; }
 function addToRoute(c, silent){ if(inRoute(c)) return; st.route.push(Object.assign(slim(c), { done:false })); if(!silent) log(`加入路线：${c.label}`); saveRoute(); }
 function removeFromRoute(qid){ st.route = st.route.filter(x => x.qid !== qid); saveRoute(); }
@@ -920,26 +1052,72 @@ function routeLength(from){
 function optimizeRoute(){
   const done = st.route.filter(x => x.done), todo = st.route.filter(x => !x.done);
   const start = st.last || st.candP || todo[0]; if(!start || todo.length < 2){ saveRoute(); return; }
-  // 最近邻 + 2-opt：从你现在的位置出发，走完所有站的总路程尽量短
-  const order = [], left = todo.slice(); let cur = start;
-  while(left.length){ let bi = 0; left.forEach((x, i) => { if(dist(cur, x) < dist(cur, left[bi])) bi = i; }); cur = left.splice(bi, 1)[0]; order.push(cur); }
-  const len = arr => arr.reduce((s, x, i) => s + dist(i ? arr[i-1] : start, x), 0);
-  let improved = true, guard = 0;
-  while(improved && guard++ < 50){
-    improved = false;
-    for(let i = 0; i < order.length - 1; i++) for(let k = i + 1; k < order.length; k++){
-      const cand = order.slice(0, i).concat(order.slice(i, k + 1).reverse(), order.slice(k + 1));
-      if(len(cand) + 0.5 < len(order)){ order.splice(0, order.length, ...cand); improved = true; }
+  const back = !!S.roundTrip;
+  // 总路程：从你现在的位置出发，依次走完；勾选“回到起点”时再加上回程
+  const len = arr => arr.reduce((s, x, i) => s + dist(i ? arr[i-1] : start, x), 0) + (back ? dist(arr[arr.length - 1], start) : 0);
+  let best;
+  if(todo.length <= 8){
+    // 8 站以内：把所有顺序都算一遍，保证是最短的
+    best = todo.slice(); let bestLen = len(best);
+    const perm = (arr, k) => {
+      if(k === arr.length){ const L = len(arr); if(L < bestLen){ bestLen = L; best = arr.slice(); } return; }
+      for(let i = k; i < arr.length; i++){ [arr[k], arr[i]] = [arr[i], arr[k]]; perm(arr, k + 1); [arr[k], arr[i]] = [arr[i], arr[k]]; }
+    };
+    perm(todo.slice(), 0);
+  } else {
+    // 站多时：最近邻 + 2-opt 优化
+    const order = [], left = todo.slice(); let cur = start;
+    while(left.length){ let bi = 0; left.forEach((x, i) => { if(dist(cur, x) < dist(cur, left[bi])) bi = i; }); cur = left.splice(bi, 1)[0]; order.push(cur); }
+    let improved = true, guard = 0;
+    while(improved && guard++ < 60){
+      improved = false;
+      for(let i = 0; i < order.length - 1; i++) for(let k = i + 1; k < order.length; k++){
+        const cand = order.slice(0, i).concat(order.slice(i, k + 1).reverse(), order.slice(k + 1));
+        if(len(cand) + 0.5 < len(order)){ order.splice(0, order.length, ...cand); improved = true; }
+      }
     }
+    best = order;
   }
-  st.route = done.concat(order); saveRoute();
+  st.route = done.concat(best); st.routeStart = { lat: start.lat, lon: start.lon };
+  log(`已生成最优路线：${best.length} 站，约 ${Math.round(len(best))} 米`);
+  saveRoute();
 }
 function walkUrl(c){ return `https://www.google.com/maps/dir/?api=1&destination=${c.lat},${c.lon}&travelmode=walking`; }
-function routeUrl(){
-  const todo = st.route.filter(x => !x.done); if(!todo.length) return '';
-  const last = todo[todo.length - 1], mids = todo.slice(0, -1).slice(0, 8);
-  return `https://www.google.com/maps/dir/?api=1&destination=${last.lat},${last.lon}&travelmode=walking` +
-         (mids.length ? '&waypoints=' + encodeURIComponent(mids.map(x => `${x.lat},${x.lon}`).join('|')) : '');
+// Google 地图链接在手机上最多带 3 个途经点，所以每 4 站分成一段
+function routeSegments(){
+  const todo = st.route.filter(x => !x.done).map(x => ({ lat:x.lat, lon:x.lon, name:nameOf(x) }));
+  if(S.roundTrip && todo.length && (st.routeStart || st.last)){ const o = st.routeStart || st.last; todo.push({ lat:o.lat, lon:o.lon, name:'回到起点' }); }
+  const segs = [];
+  for(let i = 0; i < todo.length; i += 4){
+    const grp = todo.slice(i, i + 4), origin = i ? todo[i - 1] : null, dest = grp[grp.length - 1], mids = grp.slice(0, -1);
+    const url = 'https://www.google.com/maps/dir/?api=1&travelmode=walking' + (origin ? `&origin=${origin.lat},${origin.lon}` : '') +
+      `&destination=${dest.lat},${dest.lon}` + (mids.length ? '&waypoints=' + encodeURIComponent(mids.map(x => `${x.lat},${x.lon}`).join('|')) : '');
+    segs.push({ url, from: i + 1, to: i + grp.length, names: grp.map(x => x.name) });
+  }
+  return segs;
+}
+function routeUrl(){ const s = routeSegments(); return s.length ? s[0].url : ''; }
+function segLabel(g){
+  const back = g.names[g.names.length - 1] === '回到起点';
+  const to = back ? g.to - 1 : g.to;
+  const core = to < g.from ? '' : (to > g.from ? `站 ${g.from}–${to}` : `站 ${g.from}`);
+  return back ? (core ? core + ' → 回起点' : '回到起点') : core;
+}
+function xmlEsc(t){ return String(t).replace(/[<>&'"]/g, ch => ({ '<':'&lt;', '>':'&gt;', '&':'&amp;', "'":'&apos;', '"':'&quot;' }[ch])); }
+function exportKml(){
+  const todo = st.route.filter(x => !x.done); if(!todo.length) return;
+  const pts = todo.map((x, i) => `<Placemark><name>${i + 1}. ${xmlEsc(nameOf(x))}</name><description>${xmlEsc(catLabel(x))}</description><Point><coordinates>${x.lon},${x.lat},0</coordinates></Point></Placemark>`).join('');
+  const line = `<Placemark><name>步行路线</name><LineString><coordinates>${todo.map(x => `${x.lon},${x.lat},0`).join(' ')}</coordinates></LineString></Placemark>`;
+  const kml = `<?xml version="1.0" encoding="UTF-8"?><kml xmlns="http://www.opengis.net/kml/2.2"><Document><name>驻足路线 ${new Date().toLocaleDateString('zh-CN')}</name>${pts}${line}</Document></kml>`;
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([kml], { type:'application/vnd.google-earth.kml+xml' }));
+  a.download = `zhuzu-route-${Date.now()}.kml`; document.body.appendChild(a); a.click(); a.remove();
+}
+async function copyRoute(){
+  const segs = routeSegments();
+  const txt = '驻足 · 步行路线\n' + st.route.filter(x => !x.done).map((x, i) => `${i + 1}. ${nameOf(x)}`).join('\n') + '\n\n' +
+    segs.map((g, i) => `Google 地图${segs.length > 1 ? `（第 ${i + 1} 段：站 ${g.from}–${g.to}）` : ''}：${g.url}`).join('\n');
+  try{ await navigator.clipboard.writeText(txt); return true; }catch(e){ return false; }
 }
 const mins = m => Math.max(1, Math.round(m / 80));
 function renderRoute(){
@@ -950,19 +1128,27 @@ function renderRoute(){
   box.innerHTML = `<h3>我的路线 · ${st.route.length} 站</h3>
     <p class="note" style="margin:0 0 4px">${todo.length ? `还剩 ${todo.length} 站，从你这里出发全程约 ${Math.round(tot)} 米，步行约 ${mins(tot)} 分钟。走到每一站附近会自动开始讲解。` : '全部走完了！'}</p>
     <ul class="route">${st.route.map((x, i) => `<li class="${x.done ? 'done' : ''}">
-      <span class="num ${x.done ? 'done' : 'stop'}">${i + 1}</span>
+      <span class="num ${x.done ? 'done' : 'stop'}">站${i + 1}</span>
       <div class="rn" data-i="${i}"><div class="li-name">${esc(nameOf(x))}</div><div class="li-sub">${esc(catLabel(x))}${x.done ? ' · 已到达' : ''}</div></div>
       <button class="mini" data-up="${i}" aria-label="上移">↑</button><button class="mini" data-down="${i}" aria-label="下移">↓</button><button class="mini" data-del="${i}" aria-label="移除">✕</button></li>`).join('')}</ul>
-    <div class="actions" style="margin-top:10px">
-      <button class="btn small" id="r-opt">按最短路线排序</button>
-      ${todo.length ? `<a class="btn small" href="${routeUrl()}" target="_blank" rel="noopener">Google 地图全程导航</a>` : ''}
+    <label class="chk"><input type="checkbox" id="r-back" ${S.roundTrip ? 'checked' : ''}> 走完回到起点</label>
+    <div class="actions" style="margin-top:8px">
+      <button class="btn small primary" id="r-opt">✨ 生成最优路线</button>
       <button class="btn small ghost" id="r-clear">清空路线</button>
-    </div>`;
+    </div>
+    ${todo.length ? `<div class="sep" style="margin-top:12px">导出到 Google 地图</div>
+    <div class="export">${routeSegments().map((g, i, all) => `<a class="btn small ${i ? '' : 'primary'}" href="${g.url}" target="_blank" rel="noopener">🗺 ${all.length > 1 ? `第 ${i + 1} 段（${segLabel(g)}）` : '在 Google 地图打开全程'}</a>`).join('')}</div>
+    <p class="note">${routeSegments().length > 1 ? '手机版 Google 地图一次最多带 3 个途经点，所以按每 4 站分段：走完一段再点下一段。' : '会直接打开 Google 地图的步行导航。'}</p>
+    <div class="export"><button class="btn small" id="r-kml">⬇ 导出 KML</button><button class="btn small" id="r-copy">📋 复制路线和链接</button></div>
+    <p class="note">KML 可以在电脑上导入「Google 我的地图」(mymaps.google.com)，之后在手机 Google 地图的「已保存 → 地图」里一直能看到全部站点。</p>` : ''}`;
   box.querySelectorAll('[data-up]').forEach(b => b.onclick = () => moveStop(+b.dataset.up, -1));
   box.querySelectorAll('[data-down]').forEach(b => b.onclick = () => moveStop(+b.dataset.down, 1));
   box.querySelectorAll('[data-del]').forEach(b => b.onclick = () => removeFromRoute(st.route[+b.dataset.del].qid));
   box.querySelectorAll('.rn').forEach(d => d.onclick = () => { const x = st.route[+d.dataset.i]; const p = st.last || st.candP || x; present(Object.assign({}, x), p, [], true); });
   $('#r-opt').onclick = optimizeRoute;
+  $('#r-back').onchange = e => { S.roundTrip = e.target.checked; LS.set('settings', S); optimizeRoute(); };
+  const kb = $('#r-kml'); if(kb) kb.onclick = exportKml;
+  const cb = $('#r-copy'); if(cb) cb.onclick = async () => { cb.textContent = (await copyRoute()) ? '✓ 已复制' : '复制失败'; };
   $('#r-clear').onclick = () => { st.route = []; saveRoute(); if(st.cands.length > 1 && !st.current) renderChooser(false); };
 }
 let nsT = 0;
@@ -980,6 +1166,7 @@ function renderNextStop(force){
       ${st.mode === 'sim' ? '<button class="btn small" id="ns-go">模拟走过去</button>' : ''}
       <button class="btn small ghost" id="ns-skip">跳过这站</button></div>`;
   $('#ns-skip').onclick = () => { ns.done = true; saveRoute(); };
+  remoteMeta();
   const go = $('#ns-go'); if(go) go.onclick = () => simAt(ns.lat + 0.00008, ns.lon);
 }
 function checkArrival(p){
@@ -990,6 +1177,7 @@ function checkArrival(p){
   st.holdArrival = Date.now() + 30000;
   ns.done = true; saveRoute();
   log(`到达第 ${st.route.indexOf(ns) + 1} 站：${ns.label}`);
+  notifyWatch(`✅ 到达第 ${st.route.indexOf(ns) + 1} 站`, `${nameOf(ns)} · 讲解开始`);
   setStatus('stop', '到达一站');
   st.busy = true;
   const c = Object.assign({}, ns);
@@ -999,11 +1187,11 @@ function checkArrival(p){
 
 /* ---------------- 界面渲染 ---------------- */
 function showLoading(text){
-  const el = $('#card'); el.classList.remove('hidden');
+  const el = $('#card'); el.classList.remove('hidden'); st.view = 'loading';
   el.innerHTML = `<div class="loading"><span class="dot"></span><span>${esc(text)}</span></div>`;
 }
 function hideLoading(){
-  if(st.current) renderCard(st.current.ctx, st.current.parts, st.current.ai, st.current.aiErr);
+  if(st.current) renderCard(st.current.ctx, st.current.parts, st.current.ai, st.current.aiErr, st.current.note);
   else if(st.cands.length > 1) renderChooser(false);
   else $('#card').classList.add('hidden');
 }
@@ -1019,8 +1207,8 @@ function wikiUrl(c){
   if(c.enwiki) return `https://en.wikipedia.org/wiki/${encodeURIComponent(c.enwiki.replace(/ /g,'_'))}`;
   return /^Q\d+$/.test(c.qid) ? `https://www.wikidata.org/wiki/${c.qid}` : '';
 }
-function renderCard({ c, f, texts }, parts, ai, aiErr){
-  const el = $('#card'); el.classList.remove('hidden');
+function renderCard({ c, f, texts, events }, parts, ai, aiErr, note){
+  const el = $('#card'); el.classList.remove('hidden'); st.view = 'card';
   const name = (f && f.label) || c.label;
   const typ = (f && f.types.join('、')) || c.description || '';
   const facts = [];
@@ -1037,6 +1225,8 @@ function renderCard({ c, f, texts }, parts, ai, aiErr){
     if(pt.kind === 'wiki' && pt.lang !== 'zh-CN') return `<p class="foreign"><span class="lbl">${esc(LANG_NAME[pt.src.lang])}维基百科</span>${esc(pt.text)}</p>`;
     return `<p>${esc(pt.text)}</p>`;
   }).join('');
+  const styleBar = `<div class="styles">${STYLES.map(x => `<button data-style="${x.k}" class="${(S.style || 'normal') === x.k ? 'on' : ''}">${x.icon} ${x.name}</button>`).join('')}</div>`;
+  const evList = (events && events.length) ? `<ul class="events">${events.slice(0, 6).map(e => `<li><b>${esc(e.year || '')}</b>${esc(e.label)}${e.description ? ' · ' + esc(e.description) : ''}</li>`).join('')}</ul>` : '';
   const srcLangs = Object.values(texts || {}).map(t => LANG_NAME[t.lang] + '维基百科').join('、');
   const wurl = wikiUrl(c);
   el.innerHTML = `
@@ -1045,7 +1235,9 @@ function renderCard({ c, f, texts }, parts, ai, aiErr){
     ${f && f.native && f.native !== name ? `<div class="native">${esc(f.native)}</div>` : ''}
     <div class="meta">${c.cat ? esc(catLabel(c)) + ' · ' : ''}${esc(typ)}${c.links ? ` · 知名度 ${c.links}` : ''}</div>
     ${facts.length ? `<div class="chips">${facts.map(([k, v]) => `<span class="fact"><b>${k}</b>${esc(v)}</span>`).join('')}</div>` : ''}
+    ${styleBar}
     <div class="narr">${body}</div>
+    ${evList}
     <div class="actions">
       <button class="btn small primary" id="c-play">▶ 朗读</button>
       <button class="btn small" id="c-stop">■ 停止</button>
@@ -1054,7 +1246,13 @@ function renderCard({ c, f, texts }, parts, ai, aiErr){
       ${wurl ? `<a class="btn small" href="${wurl}" target="_blank" rel="noopener">百科</a>` : ''}
     </div>
     <div class="src">资料：Wikidata${srcLangs ? '、' + srcLangs : ''}（CC BY-SA）${ai ? ` · 讲解词由 ${esc(ai)} 根据这些资料整理` : ''}</div>
-    ${aiErr ? `<p class="warn">AI 讲解没成功（${esc(aiErr)}），先用了基础讲解。</p>` : ''}`;
+    ${aiErr ? `<p class="warn">AI 讲解没成功（${esc(aiErr)}），先用了基础讲解。</p>` : ''}
+    ${note ? `<p class="note">${esc(note)}</p>` : ''}`;
+  el.querySelectorAll('[data-style]').forEach(b => b.onclick = () => {
+    S.style = b.dataset.style; LS.set('settings', S);
+    const sel = document.querySelector('[data-k="style"]'); if(sel) sel.value = S.style;
+    present(Object.assign({}, c), st.current ? st.current.ctx.p : (st.last || c), st.current ? st.current.ctx.others : [], true);
+  });
   $('#c-play').onclick = () => speak(parts);
   $('#c-route').onclick = () => { addToRoute(c); $('#c-route').textContent = '✓ 已在路线'; };
   if(st.cands.length > 1) el.insertAdjacentHTML('afterbegin', `<button class="btn small ghost" id="c-back" style="margin:-6px 0 10px -4px">‹ 附近地标（${st.cands.length}）</button>`);
@@ -1145,6 +1343,85 @@ function mapRoute(){
   });
 }
 
+/* ---------------- 手表 / 耳机遥控 ---------------- */
+// 原理：网页放一段无声音频，让手机把它当成“正在播放的音乐”；手表音乐卡片的按键就会发给本页。
+let remoteAudio = null, remoteIdx = -1;
+function silentWavUrl(){
+  const sr = 8000, n = sr * 2, buf = new ArrayBuffer(44 + n * 2), v = new DataView(buf);
+  const w = (o, t) => { for(let i = 0; i < t.length; i++) v.setUint8(o + i, t.charCodeAt(i)); };
+  w(0, 'RIFF'); v.setUint32(4, 36 + n * 2, true); w(8, 'WAVE'); w(12, 'fmt '); v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
+  v.setUint32(24, sr, true); v.setUint32(28, sr * 2, true); v.setUint16(32, 2, true); v.setUint16(34, 16, true); w(36, 'data'); v.setUint32(40, n * 2, true);
+  return URL.createObjectURL(new Blob([buf], { type:'audio/wav' }));
+}
+const isStandalone = () => (window.matchMedia && matchMedia('(display-mode: standalone)').matches) || navigator.standalone === true;
+async function remoteOn(){
+  S.watch = true; LS.set('settings', S); updateWatchBtn();
+  try{
+    if(!remoteAudio){ remoteAudio = new Audio(silentWavUrl()); remoteAudio.loop = true; remoteAudio.setAttribute('playsinline', ''); }
+    await remoteAudio.play();
+  }catch(e){ log('无法启动后台音频：' + e.message); }
+  const ms = navigator.mediaSession;
+  if(ms){
+    const h = (a, f) => { try{ ms.setActionHandler(a, f); }catch(e){} };
+    h('play', () => { remoteAudio && remoteAudio.play().catch(() => {}); ms.playbackState = 'playing'; if(st.current) speak(st.current.parts); });
+    h('pause', () => { stopSpeech(); ms.playbackState = 'paused'; });
+    h('stop', () => { stopSpeech(); ms.playbackState = 'paused'; });
+    h('nexttrack', () => remoteNext());
+    h('previoustrack', () => { if(st.current) speak(st.current.parts); });
+    ms.playbackState = 'playing';
+  } else log('这个浏览器不支持媒体控制（Media Session），手表按键可能无效');
+  remoteMeta();
+  if(S.notify && 'Notification' in window && Notification.permission === 'default'){ try{ await Notification.requestPermission(); }catch(e){} }
+  updateNotifyTip();
+  log('手表遥控已开启');
+}
+function remoteOff(){
+  S.watch = false; LS.set('settings', S); updateWatchBtn();
+  if(remoteAudio) remoteAudio.pause();
+  const ms = navigator.mediaSession;
+  if(ms){ ['play','pause','stop','nexttrack','previoustrack'].forEach(a => { try{ ms.setActionHandler(a, null); }catch(e){} }); ms.metadata = null; }
+}
+function remoteResume(){ if(S.watch && remoteAudio && remoteAudio.paused && st.mode !== 'idle') remoteAudio.play().catch(() => {}); }
+function remoteNext(){
+  const ns = nextStop();
+  if(ns){
+    const here = st.last;
+    const msg = here ? `下一站：${nameOf(ns)}，在你${relDir(st.heading, bearing(here, ns))}约 ${Math.round(dist(here, ns))} 米，步行约 ${mins(dist(here, ns))} 分钟。` : `下一站：${nameOf(ns)}。`;
+    speak([{ text: msg, lang:'zh-CN' }]); notifyWatch('➡ 下一站', msg); remoteMeta(); return;
+  }
+  if(st.cands.length){
+    const curQ = st.current && st.current.ctx.c.qid;
+    const i0 = st.cands.findIndex(x => x.qid === curQ);
+    remoteIdx = (i0 + 1) % st.cands.length;
+    const c = st.cands[remoteIdx], p = st.last || st.candP;
+    st.forceSpeak = true; present(Object.assign({}, c), p, othersOf(c, p), false); return;
+  }
+  speak([{ text:'附近还没有可以讲的地标。停下来几秒，或者把范围调大。', lang:'zh-CN' }]);
+}
+function remoteMeta(){
+  if(!S.watch || !navigator.mediaSession || !window.MediaMetadata) return;
+  const cur = st.current && st.current.ctx.c, ns = nextStop();
+  const title = cur ? nameOf(cur) : (st.cands.length ? `附近 ${st.cands.length} 处地标` : '驻足 · 城市讲解');
+  let artist = '⏭ 下一个地标 · ⏮ 重听';
+  if(ns && st.last){ const d = dist(st.last, ns); artist = `下一站 ${nameOf(ns)} · ${relDir(st.heading, bearing(st.last, ns))} ${Math.round(d)}米`; }
+  try{ navigator.mediaSession.metadata = new MediaMetadata({ title, artist, album:'驻足', artwork:[{ src:'icon-512.png', sizes:'512x512', type:'image/png' }] }); }catch(e){}
+}
+async function notifyWatch(title, body, force){
+  if(!force && (!S.watch || !S.notify)) return false;
+  if(!('Notification' in window) || Notification.permission !== 'granted' || !('serviceWorker' in navigator)) return false;
+  try{ const reg = await navigator.serviceWorker.ready; await reg.showNotification(title, { body, tag:'zhuzu', renotify:true, icon:'icon-192.png' }); return true; }
+  catch(e){ log('通知失败：' + e.message); return false; }
+}
+function updateWatchBtn(){ const b = $('#btn-watch'); if(!b) return; b.textContent = S.watch ? '⌚ 手表遥控：开' : '⌚ 手表遥控：关'; b.classList.toggle('on', !!S.watch); $('#watch-help').classList.toggle('hidden', !S.watch); }
+function updateNotifyTip(){
+  const t = $('#notify-tip'); if(!t) return;
+  if(!S.notify) t.textContent = '';
+  else if(!('Notification' in window) || !isStandalone()) t.innerHTML = '<br>想让手表<b>震动并显示文字</b>：先在 Safari 点“分享 → 添加到主屏幕”，再从主屏幕的「驻足」图标打开。';
+  else if(Notification.permission === 'granted') t.innerHTML = '<br>通知已开启：到站、讲解开始时手表会震动并显示摘要。';
+  else t.innerHTML = '<br>通知还没授权：在 iPhone「设置 → 通知 → 驻足」里打开。';
+}
+if('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js').catch(e => log('Service Worker 注册失败：' + e.message));
+
 /* ---------------- 模拟模式 ---------------- */
 const PRESETS = [
   ['根特 · 圣巴夫主教座堂', 51.05300, 3.72640], ['根特 · 钟楼', 51.05370, 3.72450], ['根特 · 伯爵城堡', 51.05720, 3.72100],
@@ -1181,6 +1458,7 @@ $('#btn-speech').onclick = () => {
 };
 $('#btn-start').onclick = () => {
   if(S.speech) unlockSpeech('好的，开始漫步。你在一座建筑前停下来，我就为你讲解。');
+  if(S.watch) remoteOn();
   requestCompass(); requestWake();
   if(!('geolocation' in navigator)){ renderError('这个浏览器不支持定位。'); return; }
   st.mode = 'gps'; st.fixes = []; st.stopped = false; showRunning(false); setStatus('weak', '等待定位…');
@@ -1197,6 +1475,7 @@ $('#btn-start').onclick = () => {
 };
 $('#btn-sim').onclick = () => {
   if(S.speech) unlockSpeech('模拟模式。点地图上的任意位置试试。');
+  if(S.watch) remoteOn();
   st.mode = 'sim'; showRunning(true); setStatus('', '模拟模式');
 };
 $('#btn-here').onclick = () => {
@@ -1211,6 +1490,15 @@ $('#btn-end').onclick = () => {
   clearInterval(st.tick); st.watchId = null; st.mode = 'idle';
   if(st.wakeLock){ st.wakeLock.release().catch(() => {}); st.wakeLock = null; }
   stopSpeech(); $('#running').classList.add('hidden'); $('#start').classList.remove('hidden'); setStatus('', '未开始'); renderNextStop(true);
+  if(remoteAudio) remoteAudio.pause();
+};
+$('#btn-watch').onclick = () => { if(S.watch) remoteOff(); else remoteOn(); };
+$('#btn-test-notify').onclick = async () => {
+  const out = $('#notify-result');
+  if(!('Notification' in window)){ out.textContent = isStandalone() ? '这台设备不支持网页通知。' : '要先“添加到主屏幕”，再从主屏幕图标打开本页，才能发通知。'; return; }
+  if(Notification.permission === 'default'){ try{ await Notification.requestPermission(); }catch(e){} }
+  if(Notification.permission !== 'granted'){ out.textContent = '通知没有被允许。请在手机设置里给「驻足」打开通知。'; return; }
+  out.textContent = (await notifyWatch('⌚ 驻足 · 测试', '如果手表震动并显示这行字，就说明通知能到手表了。', true)) ? '已发送，看看手表有没有震动。' : '发送失败，见运行日志。';
 };
 $('#btn-clear').onclick = () => { LS.set('history', []); LS.set('seen', {}); renderHistory(); log('已清空足迹'); };
 $('#presets').innerHTML = PRESETS.map((x, i) => `<button class="chip" data-i="${i}">${x[0]}</button>`).join('');
@@ -1225,6 +1513,7 @@ document.querySelectorAll('[data-k]').forEach(inp => {
     if(k === 'provider') showProvider();
     if(k === 'speech') updateSpeechBtn();
     if(k === 'radius') updateRadiusSeg();
+    if(k === 'notify') updateNotifyTip();
     if(st.chat) renderChat();
   });
 });
@@ -1236,7 +1525,7 @@ $('#btn-test').onclick = async () => {
   try{ const a = await callLLM(cfg, '你是连接测试助手。', [{ role:'user', content:'请只回复四个字：连接成功' }], 20); out.textContent = `✓ ${cfg.name} 可以用（回复：${a}）` + (S.ai ? '' : '。别忘了打开上面的“使用 AI”。'); }
   catch(e){ out.textContent = '✗ ' + e.message; }
 };
-showProvider(); updateSpeechBtn(); updateRadiusSeg(); renderCatGrid();
+showProvider(); updateSpeechBtn(); updateRadiusSeg(); renderCatGrid(); updateWatchBtn(); updateNotifyTip();
 
 if(!window.isSecureContext) $('#insecure').classList.remove('hidden');
 initMap(); renderHistory(); renderRoute();
