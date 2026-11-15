@@ -145,6 +145,8 @@
   .chk input{width:18px;height:18px;accent-color:var(--green)}
   #watch-help{background:#f6f1e7;border-radius:10px;padding:10px 12px;margin-top:10px;font-size:13px;line-height:1.7}
   #watch-help b{color:var(--green)}
+  .vids{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
+  .vids a{font-size:13px}
 </style>
 </head>
 <body>
@@ -1264,6 +1266,7 @@ function renderCard({ c, f, texts, events }, parts, ai, aiErr, note){
       <a class="btn small" href="${walkUrl(c)}" target="_blank" rel="noopener">Google 地图导航</a>
       ${wurl ? `<a class="btn small" href="${wurl}" target="_blank" rel="noopener">百科</a>` : ''}
     </div>
+    ${videoBlock(c, f)}
     <div class="src">资料：Wikidata${srcLangs ? '、' + srcLangs : ''}（CC BY-SA）${ai ? ` · 讲解词由 ${esc(ai)} 根据这些资料整理` : ''}</div>
     ${aiErr ? `<p class="warn">AI 讲解没成功（${esc(aiErr)}），先用了基础讲解。</p>` : ''}
     ${note ? `<p class="note">${esc(note)}</p>` : ''}`;
@@ -1278,6 +1281,26 @@ function renderCard({ c, f, texts, events }, parts, ai, aiErr, note){
   const back = $('#c-back'); if(back) back.onclick = () => { stopSpeech(); renderChooser(false); };
   $('#c-stop').onclick = stopSpeech;
 }
+// 很有名的地标：给出各视频平台的中文搜索入口（手机上会直接跳到对应 App）
+function videoBlock(c, f){
+  if((c.links || 0) < 10) return '';
+  const zh = (f && f.label) || c.label, city = (f && f.city) || '';
+  const kw = `${zh}${city && !zh.includes(city) ? ' ' + city : ''}`;
+  const local = f && f.native ? f.native : '';
+  const enc = encodeURIComponent;
+  const links = [
+    ['📺 B站', `https://search.bilibili.com/all?keyword=${enc(kw)}`],
+    ['🎵 抖音', `https://www.douyin.com/search/${enc(kw)}`],
+    ['📕 小红书', `https://www.xiaohongshu.com/search_result?keyword=${enc(kw)}`],
+    ['▶ YouTube', `https://www.youtube.com/results?search_query=${enc(kw + ' 中文')}`],
+    ['🎶 TikTok', `https://www.tiktok.com/search?q=${enc(kw)}`]
+  ];
+  if(local && local !== zh) links.push(['▶ YouTube（原文）', `https://www.youtube.com/results?search_query=${enc(local + (city ? ' ' + city : ''))}`]);
+  return `<div class="sep" style="margin-top:12px">🎬 看视频，深入了解</div>
+    <div class="vids">${links.map(([n, u]) => `<a class="btn small" href="${u}" target="_blank" rel="noopener">${n}</a>`).join('')}</div>
+    <p class="note" style="margin-top:4px">按「${esc(kw)}」搜索，中文平台在前。</p>`;
+}
+
 function renderHistory(){
   const h = LS.get('history', []), ul = $('#history-list');
   $('#history-empty').classList.toggle('hidden', h.length > 0);
