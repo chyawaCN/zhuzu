@@ -761,8 +761,11 @@ async function fetchEvents(c, p){
 // 只留“中国人耳熟能详 / 世界知名”的事件：有中文维基条目的优先；没有中文条目的，只有在开了 AI（会翻译成中文讲）且足够有名时才保留
 const hasCJK = t => /[\u4e00-\u9fff]/.test(t || '');
 function famousEvents(list, aiOn){
-  const keep = list.filter(e => e.zhwiki || (aiOn && e.links >= (e.here ? 8 : 20)));
-  const score = e => (e.zhwiki ? 1000 : 0) + (e.here ? 300 : 0) + e.links;
+  // 有中文维基条目 → 保留；只有中文名称但足够知名（10 种语言以上）→ 也保留；开了 AI 时再加上世界知名的（20 种以上）
+  const keep = list.filter(e => e.zhwiki || (hasCJK(e.label) && e.links >= 10) || (aiOn && e.links >= (e.here ? 8 : 20)));
+  // 近几十年的新闻事件（袭击、协议签署等）不算“历史故事”，往后排
+  const yr = e => { const m = /(公元前)?(\d+)年/.exec(e.year || ''); return m ? (m[1] ? -m[2] : +m[2]) : 0; };
+  const score = e => (e.zhwiki ? 1000 : 0) + (hasCJK(e.label) ? 500 : 0) + (e.here ? 300 : 0) + e.links - (yr(e) >= 1990 ? 1200 : 0);
   return keep.sort((a, b) => score(b) - score(a)).slice(0, 3);
 }
 // 给排名前 2 的事件各读一段百科：有中文用中文；没中文时（仅 AI 模式）读英文，交给 AI 用中文讲
