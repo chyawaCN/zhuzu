@@ -742,7 +742,7 @@ async function fetchEvents(c, p){
   OPTIONAL { ${V('zhA')} schema:about ${V('e')} ; schema:isPartOf <https://zh.wikipedia.org/> . }
   OPTIONAL { ${V('enA')} schema:about ${V('e')} ; schema:isPartOf <https://en.wikipedia.org/> . }
   SERVICE wikibase:label { bd:serviceParam wikibase:language "zh-cn,zh-hans,zh,en,mul,nl,fr,de" . ${V('e')} rdfs:label ${V('eLabel')} . ${V('e')} schema:description ${V('eDescription')} . }
-} GROUP BY ${V('e')} ${V('eLabel')} ${V('eDescription')} ORDER BY DESC(${V('links')}) LIMIT 8`;
+} GROUP BY ${V('e')} ${V('eLabel')} ${V('eDescription')} ORDER BY DESC(${V('links')}) LIMIT 15`;
   const head = `SELECT ${V('e')} ${V('eLabel')} ${V('eDescription')} (MIN(${V('d')}) AS ${V('when')}) (MAX(${V('l')}) AS ${V('links')}) (SAMPLE(${V('zhA')}) AS ${V('zh')}) (SAMPLE(${V('enA')}) AS ${V('en')}) WHERE {`;
   const around = head + ` SERVICE wikibase:around { ${V('e')} wdt:P625 ${V('loc')} . bd:serviceParam wikibase:center "Point(${(+c.lon).toFixed(6)} ${(+c.lat).toFixed(6)})"^^geo:wktLiteral . bd:serviceParam wikibase:radius "1.0" . } ` + tail;
   const qs = [around];
@@ -753,32 +753,47 @@ async function fetchEvents(c, p){
     const id = b.e.value.split('/').pop(); if(seen.has(id)) return; seen.add(id);
     const label = b.eLabel ? b.eLabel.value : ''; if(!label || /^Q\d+$/.test(label)) return;
     out.push({ qid:id, label, description: b.eDescription ? b.eDescription.value : '', year: wdYear(b.when && b.when.value),
-               links: +(b.links ? b.links.value : 0) + (idx === 1 ? 50 : 0), // 明确发生“在这座建筑”的排前面
+               links: +(b.links ? b.links.value : 0), here: idx === 1, // here：明确发生在这座建筑里
                zhwiki: wikiTitle(b.zh), enwiki: wikiTitle(b.en) });
   }));
-  return out.sort((a, b) => b.links - a.links).slice(0, 6);
+  return out;
 }
-async function eventTextsFor(events){
-  const top = events.find(e => e.zhwiki || e.enwiki); if(!top) return [];
-  try{ return [await fetchExtract(top.zhwiki ? 'zh' : 'en', top.zhwiki || top.enwiki)]; }catch(e){ return []; }
+// 只留“中国人耳熟能详 / 世界知名”的事件：有中文维基条目的优先；没有中文条目的，只有在开了 AI（会翻译成中文讲）且足够有名时才保留
+const hasCJK = t => /[\u4e00-\u9fff]/.test(t || '');
+function famousEvents(list, aiOn){
+  const keep = list.filter(e => e.zhwiki || (aiOn && e.links >= (e.here ? 8 : 20)));
+  const score = e => (e.zhwiki ? 1000 : 0) + (e.here ? 300 : 0) + e.links;
+  return keep.sort((a, b) => score(b) - score(a)).slice(0, 3);
+}
+// 给排名前 2 的事件各读一段百科：有中文用中文；没中文时（仅 AI 模式）读英文，交给 AI 用中文讲
+async function eventTextsFor(events, aiOn){
+  const pick = events.filter(e => e.zhwiki || (aiOn && e.enwiki)).slice(0, 2);
+  const res = await Promise.all(pick.map(e => fetchExtract(e.zhwiki ? 'zh' : 'en', e.zhwiki || e.enwiki).then(t => Object.assign(t, { ev: e })).catch(() => null)));
+  return res.filter(Boolean);
 }
 function templateHistory(ctx){
   const { c, f, texts, events, eventTexts } = ctx;
   const parts = [];
   const name = (f && f.label) || c.label;
-  parts.push({ text:`你面前的是「${name}」${f && f.native && f.native !== name ? '（' + f.native + '）' : ''}。我们来聊聊这一带发生过的事。`, lang:'zh-CN', kind:'facts' });
-  if(events && events.length){
-    parts.push({ text:'资料里记载，附近或这里发生过：' + events.slice(0, 4).map(e => `${e.year ? e.year + '，' : ''}${e.label}${e.description ? '——' + e.description : ''}`).join('；') + '。', lang:'zh-CN', kind:'events' });
-    const t = (eventTexts || [])[0];
-    if(t) parts.push({ text: firstN(stripParens(t.intro), t.lang === 'zh' ? 4 : 3, t.lang), lang: LANG_TAG[t.lang], kind: t.lang === 'zh' ? 'story' : 'wiki', src:t });
-  }
-  const own = texts && (texts.zh || texts.en || Object.values(texts)[0]);
+  parts.push({ text:`你面前的是「${name}」${f && f.native && f.native !== name ? '（' + f.native + '）' : ''}。我们来聊聊这一带发生过的、比较有名的事。`, lang:'zh-CN', kind:'facts' });
+  const zhTexts = (eventTexts || []).filter(t => t.lang === 'zh');
+  const told = new Set();
+  zhTexts.forEach((t, i) => {
+    const e = t.ev; told.add(e.qid);
+    const head = `${i ? '再说第二件。' : '第一件，'}${e.year ? e.year + '，' : ''}${hasCJK(e.label) ? e.label : t.title}${e.here ? '，就发生在这里' : ''}。`;
+    const body = firstN(stripParens(t.intro), 5, 'zh');
+    parts.push({ text: head + body, lang:'zh-CN', kind:'story' });
+  });
+  const restZh = (events || []).filter(e => !told.has(e.qid) && hasCJK(e.label));
+  if(restZh.length) parts.push({ text:'附近还发生过：' + restZh.map(e => `${e.year ? e.year + '的' : ''}${e.label}`).join('、') + '。', lang:'zh-CN', kind:'events' });
+  const own = texts && texts.zh;
   if(own && own.history){
-    const zh = own.lang === 'zh';
-    parts.push({ text:(events && events.length ? '再说说它自己的故事：' : '资料里附近记载的事件不多，说说它自己的故事：'), lang:'zh-CN', kind:'bridge' });
-    parts.push({ text: firstN(stripParens(own.history), zh ? 5 : 4, own.lang), lang: LANG_TAG[own.lang], kind: zh ? 'story' : 'wiki', src: own });
+    parts.push({ text:(parts.length > 1 ? '最后说说它自己的故事：' : '附近中文资料里记载的知名事件不多，说说它自己的故事：') + firstN(stripParens(own.history), 5, 'zh'), lang:'zh-CN', kind:'story' });
   }
-  if(parts.length === 1) return templateNarration(ctx);
+  if(parts.length === 1){
+    const base = templateNarration(ctx).filter(x => x.lang === 'zh-CN');
+    return [{ text:'这附近没有找到中文资料里记载的知名历史事件，先给你讲讲它本身。', lang:'zh-CN', kind:'bridge' }].concat(base);
+  }
   return parts;
 }
 
@@ -810,11 +825,13 @@ const STYLE_PROMPT = {
 3. 顺带讲讲它和这座城市的关系；
 4. 最后给我一个“抬头看”的小彩蛋细节。
 事实必须来自资料，幽默只体现在说法上。`,
-  history: `请写一段 250–400 字的“这里发生过的故事”：
+  history: `请写一段 350–500 字的“这里发生过的故事”，全部用中文：
 1. 先用一句话点出我面前是什么（中文名，并说一次当地名称）；
-2. 从资料里的历史事件列表和百科原文的历史部分中，挑 1–2 件最有画面感的事，按时间、人物、发生了什么、结果讲成故事；
-3. 说清楚这件事和这个地方、这座城市的关系；
-4. 如果资料里几乎没有相关事件，就直说“资料里记载的事件不多”，改讲这座建筑自身经历过的最大转折。
+2. 只挑 1–2 件中国听众可能听说过、或在世界史上有名的事件来讲（比如和名人、名画、战争、条约、宗教改革有关的），小事件不要提，也不要罗列清单；
+3. 每件事讲完整：背景（当时欧洲 / 这座城市是什么情况）、经过（人物、发生了什么）、结果和影响，必要时用一句话类比中国历史帮助理解（只做时间或性质上的类比，不要编造联系）；
+4. 说清楚这件事和眼前这个地方、这座城市的关系；
+5. 外文人名、地名、事件名一律给出中文译名，只在第一次出现时附原文；
+6. 如果资料里没有这样的知名事件，就直说，然后改讲这座建筑自身经历过的最大转折。
 不要编造资料里没有的情节、对白和数字。`
 };
 const CHAT_SUGGESTIONS = ['它为什么建在这里？', '它和这座城市有什么关系？', '现场有哪些细节值得看？', '当年是怎么建起来的？'];
@@ -864,8 +881,8 @@ function buildSystem({ c, f, texts, others, events, eventTexts, style }){
   const docs = Object.values(texts || {}).map(t => `【${LANG_NAME[t.lang]}维基百科：${t.title}】\n${t.full.slice(0, per)}`).join('\n\n');
   let ev = '';
   if(events && events.length){
-    ev = '\n\n=== 资料：附近或在这里发生过的历史事件（来自 Wikidata）===\n' + events.map(e => `- ${e.year || ''} ${e.label}：${e.description || ''}`).join('\n');
-    ev += (eventTexts || []).map(t => `\n\n【${LANG_NAME[t.lang]}维基百科：${t.title}】\n${t.full.slice(0, 4000)}`).join('');
+    ev = '\n\n=== 资料：附近或在这里发生过的知名历史事件（来自 Wikidata，已筛掉小事件）===\n' + events.map(e => `- ${e.year || ''} ${e.label}${e.here ? '（发生在这座建筑）' : ''}：${e.description || ''}${e.zhwiki ? '（有中文维基条目）' : ''}`).join('\n');
+    ev += (eventTexts || []).map(t => `\n\n【${LANG_NAME[t.lang]}维基百科：${t.title}】\n${t.full.slice(0, 5000)}`).join('');
   }
   const tone = STYLE_TONE[style || 'normal'] || '';
   return `${AI_SYSTEM}${tone ? '\n' + tone : ''}\n\n=== 资料：结构化信息（来自 Wikidata）===\n${JSON.stringify(material, null, 1)}\n\n=== 资料：百科原文 ===\n${docs || '（无）'}${ev}`;
@@ -973,12 +990,15 @@ async function present(c, p, others, manual){
   const style = S.style || 'normal';
   showLoading(`正在读取「${c.label}」的资料…`);
   if(manual) $('#card').scrollIntoView({ behavior:'smooth', block:'start' });
-  const [f, texts, events] = await Promise.all([
+  const [f, texts, rawEvents] = await Promise.all([
     entityFacts(c).catch(e => { log('详情读取失败：' + e.message); return null; }),
     wikiTexts(c, style).catch(e => { log('正文读取失败：' + e.message); return {}; }),
     style === 'history' ? fetchEvents(c, p).catch(e => { log('历史事件读取失败：' + e.message); return []; }) : Promise.resolve([])
   ]);
-  const eventTexts = style === 'history' && events.length ? await eventTextsFor(events) : [];
+  const aiOn = !!aiCfg();
+  const events = style === 'history' ? famousEvents(rawEvents, aiOn) : [];
+  if(style === 'history') log(`历史事件：找到 ${rawEvents.length} 条，保留知名的 ${events.length} 条`);
+  const eventTexts = events.length ? await eventTextsFor(events, aiOn) : [];
   const ctx = { c, p, f, texts, others, events, eventTexts, style };
   const system = buildSystem(ctx), cfg = aiCfg();
   const prompt = STYLE_PROMPT[style] || NARRATE_PROMPT;
@@ -992,7 +1012,7 @@ async function present(c, p, others, manual){
     if(style === 'history') parts = templateHistory(ctx);
     else parts = templateNarration(ctx);
     if(style === 'humor') note = '幽默风格需要 AI 来写，先用常规介绍。在「设置」里打开“使用 AI”就能听幽默版。';
-    if(style === 'history' && !cfg) note = '没开 AI 时，历史故事是把资料里的事件和历史段落直接读出来；打开 AI 会讲成完整的故事。';
+    if(style === 'history' && !cfg) note = '没开 AI 时只读中文维基里的知名事件；打开 AI 会把中外资料整理成完整的中文故事（背景、经过、影响）。';
   }
   st.current = { ctx, parts, ai, aiErr, note };
   st.chat = { system, pending:false, error:'', messages: [
@@ -1247,7 +1267,8 @@ function renderCard({ c, f, texts, events }, parts, ai, aiErr, note){
     return `<p>${esc(pt.text)}</p>`;
   }).join('');
   const styleBar = `<div class="styles">${STYLES.map(x => `<button data-style="${x.k}" class="${(S.style || 'normal') === x.k ? 'on' : ''}">${x.icon} ${x.name}</button>`).join('')}</div>`;
-  const evList = (events && events.length) ? `<ul class="events">${events.slice(0, 6).map(e => `<li><b>${esc(e.year || '')}</b>${esc(e.label)}${e.description ? ' · ' + esc(e.description) : ''}</li>`).join('')}</ul>` : '';
+  const evShow = (events || []).filter(e => hasCJK(e.label));
+  const evList = evShow.length ? `<div class="sep" style="margin-top:12px">🏺 这一带发生过的知名事件</div><ul class="events">${evShow.map(e => `<li><b>${esc(e.year || '')}</b>${esc(e.label)}${e.here ? ' · 就在这里' : ''}${hasCJK(e.description) ? ' · ' + esc(e.description) : ''}${e.zhwiki ? ` · <a href="https://zh.wikipedia.org/wiki/${encodeURIComponent(e.zhwiki.replace(/ /g, '_'))}" target="_blank" rel="noopener">百科</a>` : ''}</li>`).join('')}</ul>` : '';
   const srcLangs = Object.values(texts || {}).map(t => LANG_NAME[t.lang] + '维基百科').join('、');
   const wurl = wikiUrl(c);
   el.innerHTML = `
