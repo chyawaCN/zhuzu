@@ -763,14 +763,17 @@ const hasCJK = t => /[\u4e00-\u9fff]/.test(t || '');
 function famousEvents(list, aiOn){
   // 有中文维基条目 → 保留；只有中文名称但足够知名（10 种语言以上）→ 也保留；开了 AI 时再加上世界知名的（20 种以上）
   const keep = list.filter(e => e.zhwiki || (hasCJK(e.label) && e.links >= 10) || (aiOn && e.links >= (e.here ? 8 : 20)));
-  // 近几十年的新闻事件（袭击、协议签署等）不算“历史故事”，往后排
-  const yr = e => { const m = /(公元前)?(\d+)年/.exec(e.year || ''); return m ? (m[1] ? -m[2] : +m[2]) : 0; };
-  const score = e => (e.zhwiki ? 1000 : 0) + (hasCJK(e.label) ? 500 : 0) + (e.here ? 300 : 0) + e.links - (yr(e) >= 1990 ? 1200 : 0);
-  return keep.sort((a, b) => score(b) - score(a)).slice(0, 3);
+  // 历史事件最多 3 件；1990 年以后的“近年大事”（袭击、条约签署等）另外最多 2 件，单独列出
+  const score = e => (e.zhwiki ? 1000 : 0) + (hasCJK(e.label) ? 500 : 0) + (e.here ? 300 : 0) + e.links;
+  const sorted = keep.sort((a, b) => score(b) - score(a));
+  const old = sorted.filter(e => evYear(e) < 1990).slice(0, 3);
+  const recent = sorted.filter(e => evYear(e) >= 1990).slice(0, 2).map(e => Object.assign(e, { recent: true }));
+  return old.concat(recent);
 }
+function evYear(e){ const m = /(公元前)?(\d+)年/.exec(e.year || ''); return m ? (m[1] ? -m[2] : +m[2]) : 0; }
 // 给排名前 2 的事件各读一段百科：有中文用中文；没中文时（仅 AI 模式）读英文，交给 AI 用中文讲
 async function eventTextsFor(events, aiOn){
-  const pick = events.filter(e => e.zhwiki || (aiOn && e.enwiki)).slice(0, 2);
+  const pick = events.filter(e => !e.recent && (e.zhwiki || (aiOn && e.enwiki))).slice(0, 2);
   const res = await Promise.all(pick.map(e => fetchExtract(e.zhwiki ? 'zh' : 'en', e.zhwiki || e.enwiki).then(t => Object.assign(t, { ev: e })).catch(() => null)));
   return res.filter(Boolean);
 }
@@ -787,8 +790,10 @@ function templateHistory(ctx){
     const body = firstN(stripParens(t.intro), 5, 'zh');
     parts.push({ text: head + body, lang:'zh-CN', kind:'story' });
   });
-  const restZh = (events || []).filter(e => !told.has(e.qid) && hasCJK(e.label));
+  const restZh = (events || []).filter(e => !e.recent && !told.has(e.qid) && hasCJK(e.label));
   if(restZh.length) parts.push({ text:'附近还发生过：' + restZh.map(e => `${e.year ? e.year + '的' : ''}${e.label}`).join('、') + '。', lang:'zh-CN', kind:'events' });
+  const recentZh = (events || []).filter(e => e.recent && hasCJK(e.label));
+  if(recentZh.length) parts.push({ text:'近些年，这一带还发生过：' + recentZh.map(e => `${e.year ? e.year + '的' : ''}${e.label}`).join('、') + '。', lang:'zh-CN', kind:'events' });
   const own = texts && texts.zh;
   if(own && own.history){
     parts.push({ text:(parts.length > 1 ? '最后说说它自己的故事：' : '附近中文资料里记载的知名事件不多，说说它自己的故事：') + firstN(stripParens(own.history), 5, 'zh'), lang:'zh-CN', kind:'story' });
@@ -834,7 +839,8 @@ const STYLE_PROMPT = {
 3. 每件事讲完整：背景（当时欧洲 / 这座城市是什么情况）、经过（人物、发生了什么）、结果和影响，必要时用一句话类比中国历史帮助理解（只做时间或性质上的类比，不要编造联系）；
 4. 说清楚这件事和眼前这个地方、这座城市的关系；
 5. 外文人名、地名、事件名一律给出中文译名，只在第一次出现时附原文；
-6. 如果资料里没有这样的知名事件，就直说，然后改讲这座建筑自身经历过的最大转折。
+6. 如果资料里没有这样的知名事件，就直说，然后改讲这座建筑自身经历过的最大转折；
+7. 资料里标为“近年大事”的事件（1990 年以后），放在最后用一两句话简要提一下；涉及袭击、灾难等伤亡事件时，语气要平实、尊重，不渲染细节。
 不要编造资料里没有的情节、对白和数字。`
 };
 const CHAT_SUGGESTIONS = ['它为什么建在这里？', '它和这座城市有什么关系？', '现场有哪些细节值得看？', '当年是怎么建起来的？'];
@@ -884,7 +890,7 @@ function buildSystem({ c, f, texts, others, events, eventTexts, style }){
   const docs = Object.values(texts || {}).map(t => `【${LANG_NAME[t.lang]}维基百科：${t.title}】\n${t.full.slice(0, per)}`).join('\n\n');
   let ev = '';
   if(events && events.length){
-    ev = '\n\n=== 资料：附近或在这里发生过的知名历史事件（来自 Wikidata，已筛掉小事件）===\n' + events.map(e => `- ${e.year || ''} ${e.label}${e.here ? '（发生在这座建筑）' : ''}：${e.description || ''}${e.zhwiki ? '（有中文维基条目）' : ''}`).join('\n');
+    ev = '\n\n=== 资料：附近或在这里发生过的知名历史事件（来自 Wikidata，已筛掉小事件）===\n' + events.map(e => `- ${e.year || ''} ${e.label}${e.here ? '（发生在这座建筑）' : ''}${e.recent ? '（近年大事）' : ''}：${e.description || ''}${e.zhwiki ? '（有中文维基条目）' : ''}`).join('\n');
     ev += (eventTexts || []).map(t => `\n\n【${LANG_NAME[t.lang]}维基百科：${t.title}】\n${t.full.slice(0, 5000)}`).join('');
   }
   const tone = STYLE_TONE[style || 'normal'] || '';
@@ -1270,7 +1276,10 @@ function renderCard({ c, f, texts, events }, parts, ai, aiErr, note){
     return `<p>${esc(pt.text)}</p>`;
   }).join('');
   const styleBar = `<div class="styles">${STYLES.map(x => `<button data-style="${x.k}" class="${(S.style || 'normal') === x.k ? 'on' : ''}">${x.icon} ${x.name}</button>`).join('')}</div>`;
-  const evShow = (events || []).filter(e => hasCJK(e.label));
+  const evLi = e => `<li><b>${esc(e.year || '')}</b>${esc(e.label)}${e.here ? ' · 就在这里' : ''}${hasCJK(e.description) ? ' · ' + esc(e.description) : ''}${e.zhwiki ? ` · <a href="https://zh.wikipedia.org/wiki/${encodeURIComponent(e.zhwiki.replace(/ /g, '_'))}" target="_blank" rel="noopener">百科</a>` : ''}</li>`;
+  const evRecent = (events || []).filter(e => e.recent && hasCJK(e.label));
+  const evRecentList = evRecent.length ? `<div class="sep" style="margin-top:12px">📰 近几十年这一带发生的大事</div><ul class="events">${evRecent.map(evLi).join('')}</ul>` : '';
+  const evShow = (events || []).filter(e => !e.recent && hasCJK(e.label));
   const evList = evShow.length ? `<div class="sep" style="margin-top:12px">🏺 这一带发生过的知名事件</div><ul class="events">${evShow.map(e => `<li><b>${esc(e.year || '')}</b>${esc(e.label)}${e.here ? ' · 就在这里' : ''}${hasCJK(e.description) ? ' · ' + esc(e.description) : ''}${e.zhwiki ? ` · <a href="https://zh.wikipedia.org/wiki/${encodeURIComponent(e.zhwiki.replace(/ /g, '_'))}" target="_blank" rel="noopener">百科</a>` : ''}</li>`).join('')}</ul>` : '';
   const srcLangs = Object.values(texts || {}).map(t => LANG_NAME[t.lang] + '维基百科').join('、');
   const wurl = wikiUrl(c);
@@ -1283,6 +1292,7 @@ function renderCard({ c, f, texts, events }, parts, ai, aiErr, note){
     ${styleBar}
     <div class="narr">${body}</div>
     ${evList}
+    ${evRecentList}
     <div class="actions">
       <button class="btn small primary" id="c-play">▶ 朗读</button>
       <button class="btn small" id="c-stop">■ 停止</button>
